@@ -6,57 +6,69 @@ the model. Transcription runs offline on the CPU.
 
 ## Build on Linux
 
-For a local build, start in the project root on Ubuntu 26.04 Desktop x64.
-Install the system dependencies on the Ubuntu build machine:
+From the project root on Ubuntu 26.04 Desktop x86-64, install the build
+dependencies:
 
 ```sh
 sudo apt update
-sudo apt install python3-venv libxcb-cursor0 libegl1 libxkbcommon-x11-0
-```
-
-Then install the Python dependencies and build the application:
-
-```sh
+sudo apt install curl python3-venv libxcb-cursor0 libegl1 libxkbcommon-x11-0
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python scripts/build_desktop.py
 ```
 
-The build downloads the model and writes the portable application to
-`dist/Video2Txt.run`.
+Download the AppImage builder and its Type 2 runtime once:
+
+```sh
+mkdir -p build
+curl -fL https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o build/appimagetool.AppImage
+curl -fL https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64 -o build/runtime-x86_64
+chmod +x build/appimagetool.AppImage
+```
+
+Build the application. The first build downloads the Whisper model:
+
+```sh
+python scripts/build_desktop.py \
+  --appimagetool build/appimagetool.AppImage \
+  --runtime-file build/runtime-x86_64
+```
 
 ### Rebuild offline
 
-After installing the build dependencies and downloading the model once, pass
-the path to the cached model snapshot to skip the download step:
+Reuse the downloaded build tools and point the build at a local model
+snapshot containing `config.json`, `model.bin`, and `tokenizer.json`:
 
 ```sh
-HF_HUB_OFFLINE=1 python scripts/build_desktop.py --model-dir /path/to/model-snapshot
+HF_HUB_OFFLINE=1 python scripts/build_desktop.py \
+  --appimagetool build/appimagetool.AppImage \
+  --runtime-file build/runtime-x86_64 \
+  --model-dir /path/to/model-snapshot
 ```
 
-Use the snapshot directory that contains `config.json`, `model.bin`, and
-`tokenizer.json`. On Ubuntu, look under
+On Ubuntu, look for the model under
 `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3/snapshots/`.
-The rebuilt application is written to `dist/Video2Txt.run`.
 
 ## Run the built application
 
-From the project root, launch the executable:
+The build produces one file, `dist/Video2Txt-x86_64.AppImage`. Copy it as
+needed. Python, Qt, FFmpeg libraries, and the Whisper model are bundled.
 
 ```sh
-./dist/Video2Txt.run
+./dist/Video2Txt-x86_64.AppImage
 ```
 
-Select **Choose video…** for a local file, or paste an Aparat video
-link. Click **Transcribe**, then click **کپی** to copy the full
-transcript. Links require internet access. The downloaded media is temporary
-and is removed when transcription finishes or fails.
+If FUSE mounts are unavailable, use the built-in extraction mode. It needs
+about 4 GB of free space in the temporary directory:
 
-To use the app on another Ubuntu 26.04 Desktop x64 machine, copy
-`Video2Txt.run` and run it there. It contains the model and the application
-dependencies. At each launch it unpacks into a temporary directory, so allow
-about 4 GB of free space there. The temporary files are removed on normal exit.
+```sh
+./dist/Video2Txt-x86_64.AppImage --appimage-extract-and-run
+```
+
+Select **Choose video…** or paste an Aparat video link. Optionally enter
+specialized terms in **Hot words**, separated by commas, then click
+**Transcribe**. Click **کپی** to copy the full transcript. Aparat links
+require internet access. Downloaded media is removed when processing ends.
 
 ## Project layout
 

@@ -1,10 +1,10 @@
-"""Build a portable desktop bundle for Linux."""
+"""Build a portable desktop AppImage for Ubuntu x86-64."""
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from pathlib import Path
 
@@ -13,40 +13,47 @@ from huggingface_hub import snapshot_download
 ROOT = Path(__file__).resolve().parents[1]
 
 
-LAUNCHER = """#!/bin/sh
-set -eu
-work=$(mktemp -d "${TMPDIR:-/tmp}/video2txt.XXXXXXXX")
-trap 'rm -rf -- "$work"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-tail -n +PAYLOAD_LINE -- "$0" | tar -xf - -C "$work"
-"$work/Video2Txt/Video2Txt" "$@"
-exit $?
-"""
-
-
-def write_executable(bundle, output):
-    """Append the bundled app to a launcher and publish it atomically."""
-    header = LAUNCHER.replace(
-        "PAYLOAD_LINE", str(LAUNCHER.count("\n") + 1)
-    ).encode("utf-8")
-    with tempfile.TemporaryDirectory(dir=output.parent) as temporary:
-        executable = Path(temporary) / output.name
-        with executable.open("wb") as stream:
-            stream.write(header)
-            with tarfile.open(fileobj=stream, mode="w|") as archive:
-                archive.add(bundle, arcname="Video2Txt")
-        executable.chmod(0o755)
-        executable.replace(output)
+def write_appimage(bundle, output, tool, runtime):
+    """Package the frozen application as a Type 2 AppImage."""
+    launcher = bundle / "AppRun"
+    launcher.write_text(
+        '#!/bin/sh\nexec "$(dirname -- "$0")/Video2Txt" "$@"\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    (bundle / "video2txt.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Video2Txt\n"
+        "Exec=Video2Txt\nIcon=video2txt\nCategories=AudioVideo;\n",
+        encoding="utf-8",
+    )
+    shutil.copyfile(ROOT / "assets" / "video2txt.png", bundle / "video2txt.png")
+    env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1")
+    subprocess.run(
+        [
+            str(tool), "--runtime-file", str(runtime),
+            "--mksquashfs-opt=-processors", "--mksquashfs-opt=4",
+            str(bundle), str(output),
+        ],
+        env=env,
+        check=True,
+    )
 
 
 def main():
     """Freeze the desktop app and add the complete offline model."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path)
+    parser.add_argument("--appimagetool", type=Path, required=True)
+    parser.add_argument("--runtime-file", type=Path, required=True)
     args = parser.parse_args()
     if sys.platform != "linux":
         parser.error("Desktop builds are supported only on Linux.")
+    if os.uname().machine != "x86_64":
+        parser.error("The AppImage build targets x86-64.")
+    if not os.access(args.appimagetool, os.X_OK):
+        parser.error("Provide an executable appimagetool with --appimagetool.")
+    if not args.runtime_file.is_file():
+        parser.error("Provide the x86-64 Type 2 runtime with --runtime-file.")
     snapshot = args.model_dir or snapshot_download(
         "Systran/faster-whisper-large-v3",
         allow_patterns=["*.json", "model.bin", "README.md", "LICENSE*"],
@@ -56,9 +63,9 @@ def main():
         if not (snapshot / filename).is_file():
             parser.error(f"Missing model file: {snapshot / filename}")
 
-    output = ROOT / "dist" / "Video2Txt.run"
+    output = ROOT / "dist" / "Video2Txt-x86_64.AppImage"
     output.parent.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="video2txt-build-") as temporary:
+    with tempfile.TemporaryDirectory(dir=output.parent) as temporary:
         staging = Path(temporary)
         subprocess.run(
             [
@@ -78,7 +85,11 @@ def main():
         )
         bundle = staging / "dist" / "Video2Txt"
         shutil.copytree(snapshot, bundle / "_internal" / "model")
-        write_executable(bundle, output)
+        image = staging / output.name
+        write_appimage(
+            bundle, image, args.appimagetool.resolve(), args.runtime_file.resolve()
+        )
+        image.replace(output)
     print(output)
 
 

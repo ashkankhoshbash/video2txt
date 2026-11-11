@@ -53,6 +53,7 @@ class TranscriptionWorker(QThread):
         self.video = None
         self.model = None
         self.url = ""
+        self.hotwords = None
 
     def run(self):
         """Transcribe the selected video and report the result."""
@@ -74,7 +75,7 @@ class TranscriptionWorker(QThread):
         self.phase.emit("Transcribing…")
         if self.model is None:
             self.model = load_model()
-        return transcribe(self.model, video)
+        return transcribe(self.model, video, hotwords=self.hotwords)
 
 
 class Desktop(QWidget):
@@ -99,6 +100,14 @@ class Desktop(QWidget):
         self.url.setClearButtonEnabled(True)
         self.url.textChanged.connect(self.update_source)
         layout.addWidget(self.url)
+
+        self.hotwords = QLineEdit()
+        self.hotwords.setPlaceholderText("e.g. داتیس، تشخیص چهره، WDR")
+        self.hotwords.setClearButtonEnabled(True)
+        hotwords_label = QLabel("&Hot words (optional)")
+        hotwords_label.setBuddy(self.hotwords)
+        layout.addWidget(hotwords_label)
+        layout.addWidget(self.hotwords)
 
         controls = QHBoxLayout()
         self.choose = QPushButton("Choose video…")
@@ -175,6 +184,7 @@ class Desktop(QWidget):
         """Start processing and show progress."""
         self.choose.setEnabled(False)
         self.url.setEnabled(False)
+        self.hotwords.setEnabled(False)
         self.start.setEnabled(False)
         self.copy.setEnabled(False)
         self.output.clear()
@@ -182,6 +192,7 @@ class Desktop(QWidget):
         self.progress.show()
         self.worker.video = self.video
         self.worker.url = self.url.text().strip()
+        self.worker.hotwords = self.hotwords.text().strip() or None
         self.worker.start()
 
     def copy_transcript(self):
@@ -206,6 +217,7 @@ class Desktop(QWidget):
         self.progress.hide()
         self.choose.setEnabled(True)
         self.url.setEnabled(True)
+        self.hotwords.setEnabled(True)
         self.start.setEnabled(True)
 
     def closeEvent(self, event):

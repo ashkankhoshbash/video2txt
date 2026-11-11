@@ -4,7 +4,7 @@ import av
 import numpy as np
 
 
-def transcribe(model, video):
+def transcribe(model, video, *, hotwords=None):
     """Return Persian text from the video's first audio track."""
     resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
     chunks = []
@@ -21,5 +21,7 @@ def transcribe(model, video):
         return ""
 
     samples = np.concatenate(chunks).astype(np.float32) / 32768
-    segments, _ = model.transcribe(samples, language="fa", vad_filter=True)
+    segments, _ = model.transcribe(
+        samples, language="fa", vad_filter=True, hotwords=hotwords
+    )
     return "\n".join(segment.text.strip() for segment in segments).strip()
