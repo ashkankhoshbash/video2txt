@@ -2,7 +2,7 @@
 
 Video2Txt displays Persian transcripts from local videos using Whisper large-v3.
 The single-file Linux x64 executable includes Python, Qt, PyAV with FFmpeg libraries, and
-the model. Transcription runs offline on the CPU.
+the model. Transcription runs offline on an NVIDIA GPU using CUDA.
 
 ## Build on Linux
 
@@ -52,14 +52,16 @@ On Ubuntu, look for the model under
 ## Run the built application
 
 The build produces one file, `dist/Video2Txt-x86_64.AppImage`. Copy it as
-needed. Python, Qt, FFmpeg libraries, and the Whisper model are bundled.
+needed. Python, Qt, FFmpeg libraries, CUDA 12 user-space libraries, cuDNN 9, and the
+Whisper model are bundled. The system needs a compatible NVIDIA GPU and driver.
+Transcription requires CUDA and fails if the GPU is unavailable.
 
 ```sh
 ./dist/Video2Txt-x86_64.AppImage
 ```
 
 If FUSE mounts are unavailable, use the built-in extraction mode. It needs
-about 4 GB of free space in the temporary directory:
+about 6 GB of free space in the temporary directory:
 
 ```sh
 ./dist/Video2Txt-x86_64.AppImage --appimage-extract-and-run

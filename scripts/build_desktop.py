@@ -6,11 +6,31 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from importlib.util import find_spec
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def cuda_libraries():
+    """Find the CUDA runtime libraries installed in the build environment."""
+    libraries = []
+    for package in ("cublas", "cudnn", "cuda_nvrtc"):
+        spec = find_spec(f"nvidia.{package}") if find_spec("nvidia") else None
+        locations = spec.submodule_search_locations if spec else ()
+        files = [
+            file for location in locations or ()
+            for file in (Path(location) / "lib").glob("*.so*")
+            if file.is_file()
+        ]
+        if not files:
+            raise RuntimeError(
+                f"Missing NVIDIA {package} libraries. Install requirements.txt."
+            )
+        libraries.extend(files)
+    return libraries
 
 
 def write_appimage(bundle, output, tool, runtime):
@@ -54,6 +74,7 @@ def main():
         parser.error("Provide an executable appimagetool with --appimagetool.")
     if not args.runtime_file.is_file():
         parser.error("Provide the x86-64 Type 2 runtime with --runtime-file.")
+    libraries = cuda_libraries()
     snapshot = args.model_dir or snapshot_download(
         "Systran/faster-whisper-large-v3",
         allow_patterns=["*.json", "model.bin", "README.md", "LICENSE*"],
@@ -84,7 +105,10 @@ def main():
             check=True,
         )
         bundle = staging / "dist" / "Video2Txt"
-        shutil.copytree(snapshot, bundle / "_internal" / "model")
+        internal = bundle / "_internal"
+        for library in libraries:
+            shutil.copy2(library, internal / library.name)
+        shutil.copytree(snapshot, internal / "model")
         image = staging / output.name
         write_appimage(
             bundle, image, args.appimagetool.resolve(), args.runtime_file.resolve()

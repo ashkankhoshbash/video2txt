@@ -32,12 +32,17 @@ def load_model():
     model = str(MODEL_PATH)
     if not getattr(sys, "frozen", False) and not MODEL_PATH.is_dir():
         model = "large-v3"
-    return WhisperModel(
-        model,
-        device="cpu",
-        compute_type="int8",
-        local_files_only=True,
-    )
+    try:
+        return WhisperModel(
+            model,
+            device="cuda",
+            compute_type="int8_float16",
+            local_files_only=True,
+        )
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"Could not load Whisper on the NVIDIA GPU: {error}"
+        ) from error
 
 
 class TranscriptionWorker(QThread):
