@@ -48,8 +48,10 @@ From the project root, launch the executable:
 ./dist/Video2Txt.run
 ```
 
-Select **Choose video…**, pick a file, then click **Transcribe**. The Persian
-text appears in the window and can be selected and copied.
+Select **Choose video…** for a local file, or paste an Aparat video
+link. Click **Transcribe**, then click **کپی** to copy the full
+transcript. Links require internet access. The downloaded media is temporary
+and is removed when transcription finishes or fails.
 
 To use the app on another Ubuntu 26.04 Desktop x64 machine, copy
 `Video2Txt.run` and run it there. It contains the model and the application

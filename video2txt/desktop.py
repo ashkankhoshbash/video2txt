@@ -3,6 +3,7 @@
 import argparse
 import multiprocessing
 import sys
+import tempfile
 from pathlib import Path
 
 from faster_whisper import WhisperModel
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QTextEdit,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from video2txt.download import download_audio
 from video2txt.transcription import transcribe
 
 MODEL_PATH = Path(getattr(sys, "_MEIPASS", Path(__file__).parents[1])) / "model"
@@ -42,21 +45,36 @@ class TranscriptionWorker(QThread):
 
     result = Signal(str)
     failed = Signal(str)
+    phase = Signal(str)
 
     def __init__(self, parent):
         """Initialize an idle worker with a reusable model."""
         super().__init__(parent)
         self.video = None
         self.model = None
+        self.url = ""
 
     def run(self):
         """Transcribe the selected video and report the result."""
         try:
-            if self.model is None:
-                self.model = load_model()
-            self.result.emit(transcribe(self.model, self.video))
+            if self.url:
+                self.phase.emit("Downloading media…")
+                with tempfile.TemporaryDirectory(prefix="video2txt-media-") as temp:
+                    video = download_audio(self.url, Path(temp))
+                    text = self.transcribe_video(video)
+            else:
+                text = self.transcribe_video(self.video)
+            self.result.emit(text)
         except Exception as error:
             self.failed.emit(str(error))
+
+
+    def transcribe_video(self, video):
+        """Load the model once and transcribe the input."""
+        self.phase.emit("Transcribing…")
+        if self.model is None:
+            self.model = load_model()
+        return transcribe(self.model, video)
 
 
 class Desktop(QWidget):
@@ -74,13 +92,13 @@ class Desktop(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
-        title = QLabel("Video2Txt")
-        font = title.font()
-        font.setPointSize(22)
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
-        layout.addWidget(QLabel("Offline Persian transcription"))
+        layout.addWidget(QLabel("Persian transcription"))
+        self.url = QLineEdit()
+        self.url.setAccessibleName("Aparat video link")
+        self.url.setPlaceholderText("Paste an Aparat video link")
+        self.url.setClearButtonEnabled(True)
+        self.url.textChanged.connect(self.update_source)
+        layout.addWidget(self.url)
 
         controls = QHBoxLayout()
         self.choose = QPushButton("Choose video…")
@@ -97,7 +115,14 @@ class Desktop(QWidget):
         self.filename.setTextFormat(Qt.TextFormat.PlainText)
         self.filename.setWordWrap(True)
         layout.addWidget(self.filename)
-        layout.addWidget(QLabel("Transcript"))
+        transcript_header = QHBoxLayout()
+        transcript_header.addWidget(QLabel("Transcript"))
+        transcript_header.addStretch()
+        self.copy = QPushButton("کپی")
+        self.copy.setEnabled(False)
+        self.copy.clicked.connect(self.copy_transcript)
+        transcript_header.addWidget(self.copy)
+        layout.addLayout(transcript_header)
         self.output = QTextEdit(readOnly=True)
         self.output.setAccessibleName("Persian transcript")
         self.output.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -107,11 +132,12 @@ class Desktop(QWidget):
         self.progress.setRange(0, 0)
         self.progress.hide()
         layout.addWidget(self.progress)
-        self.status = QLabel("Choose a video to get started.")
+        self.status = QLabel("Choose a video or paste a link.")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
+        self.worker.phase.connect(self.status.setText)
         self.worker.result.connect(self.show_result)
         self.worker.failed.connect(self.show_error)
         self.worker.finished.connect(self.finish_work)
@@ -125,24 +151,48 @@ class Desktop(QWidget):
         )
         if filename:
             self.video = Path(filename)
-            self.filename.setText(self.video.name)
-            self.output.clear()
-            self.status.setText("Ready to transcribe.")
-            self.start.setEnabled(True)
+            self.url.clear()
+            self.update_source()
+
+    def update_source(self):
+        """Update the active input and clear the previous transcript."""
+        url = self.url.text().strip()
+        if url:
+            self.video = None
+        self.filename.setText(
+            "Video link selected" if url else
+            self.video.name if self.video else "No video selected"
+        )
+        self.output.clear()
+        self.copy.setEnabled(False)
+        ready = bool(url or self.video)
+        self.start.setEnabled(ready)
+        self.status.setText(
+            "Ready to transcribe." if ready else "Choose a video or paste a link."
+        )
 
     def start_work(self):
         """Start processing and show progress."""
         self.choose.setEnabled(False)
+        self.url.setEnabled(False)
         self.start.setEnabled(False)
+        self.copy.setEnabled(False)
         self.output.clear()
-        self.status.setText("Transcribing…")
+        self.status.setText("Preparing…")
         self.progress.show()
         self.worker.video = self.video
+        self.worker.url = self.url.text().strip()
         self.worker.start()
+
+    def copy_transcript(self):
+        """Copy the entire transcript to the system clipboard."""
+        QApplication.clipboard().setText(self.output.toPlainText())
+        self.status.setText("Transcript copied.")
 
     def show_result(self, text):
         """Display selectable Persian text inside the window."""
         self.output.setPlainText(text)
+        self.copy.setEnabled(bool(text))
         self.status.setText(
             "Transcription complete." if text else "No speech detected."
         )
@@ -155,6 +205,7 @@ class Desktop(QWidget):
         """Restore the controls after processing."""
         self.progress.hide()
         self.choose.setEnabled(True)
+        self.url.setEnabled(True)
         self.start.setEnabled(True)
 
     def closeEvent(self, event):
