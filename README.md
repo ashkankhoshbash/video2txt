@@ -1,37 +1,30 @@
 # Video2Txt Desktop
 
 Video2Txt displays Persian transcripts from local videos using Whisper large-v3.
-The portable x64 bundles include Python, Qt, PyAV with FFmpeg libraries, and
+The single-file Linux x64 executable includes Python, Qt, PyAV with FFmpeg libraries, and
 the model. Transcription runs offline on the CPU.
 
-## Run a portable bundle
+## Build on Linux
 
-- Windows 10 (1809 or later) or Windows 11 x64. Extract `Video2Txt-windows-x64.zip` and open
-  `Video2Txt/Video2Txt.exe`.
-- Ubuntu 26.04 Desktop x64. Extract `Video2Txt-ubuntu-26.04-x64.tar.gz`
-  with your archive manager or `tar -xzf Video2Txt-ubuntu-26.04-x64.tar.gz`.
-  Open `Video2Txt/Video2Txt` or launch it from a terminal.
-
-Keep the executable and its `_internal` folder together. Select **Choose
-video…**, pick a file, then click **Transcribe**. The Persian text appears
-in the window and can be selected and copied. Each archive includes roughly
-3.1 GB of model files before compression.
-
-## Build the bundles
-
-For a local build, use a clean x64 environment on the target OS with Python 3.12
-on Windows or Ubuntu 26.04’s system Python.
-On the Ubuntu build machine, install `libxcb-cursor0`, `libegl1`, and
-`libxkbcommon-x11-0` before building. Then run:
+For a local build, start in the project root on Ubuntu 26.04 Desktop x64.
+Install the system dependencies on the Ubuntu build machine:
 
 ```sh
-python -m pip install -r requirements-desktop.txt
+sudo apt update
+sudo apt install python3-venv libxcb-cursor0 libegl1 libxkbcommon-x11-0
+```
+
+Then install the Python dependencies and build the application:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 python scripts/build_desktop.py
 ```
 
 The build downloads the model and writes the portable application to
-`dist/Video2Txt/`. To run from source with an already cached model, use
-`python -m video2txt.desktop`.
+`dist/Video2Txt.run`.
 
 ### Rebuild offline
 
@@ -45,12 +38,27 @@ HF_HUB_OFFLINE=1 python scripts/build_desktop.py --model-dir /path/to/model-snap
 Use the snapshot directory that contains `config.json`, `model.bin`, and
 `tokenizer.json`. On Ubuntu, look under
 `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3/snapshots/`.
-The rebuilt application is written to `dist/Video2Txt/`.
+The rebuilt application is written to `dist/Video2Txt.run`.
+
+## Run the built application
+
+From the project root, launch the executable:
+
+```sh
+./dist/Video2Txt.run
+```
+
+Select **Choose video…**, pick a file, then click **Transcribe**. The Persian
+text appears in the window and can be selected and copied.
+
+To use the app on another Ubuntu 26.04 Desktop x64 machine, copy
+`Video2Txt.run` and run it there. It contains the model and the application
+dependencies. At each launch it unpacks into a temporary directory, so allow
+about 4 GB of free space there. The temporary files are removed on normal exit.
 
 ## Project layout
 
 - `video2txt/desktop.py` contains the desktop interface and its worker.
 - `video2txt/transcription.py` contains the shared audio and speech pipeline.
-- `main.py` remains the GPU batch CLI for the `videos/` directory.
-- `scripts/build_desktop.py` builds an application for the current OS.
+- `scripts/build_desktop.py` builds the portable Linux application.
 - `dist/` contains generated packages and is ignored by Git.

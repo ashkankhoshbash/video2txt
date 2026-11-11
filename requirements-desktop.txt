@@ -1,5 +1,0 @@
-av
-faster-whisper
-numpy
-PySide6-Essentials==6.12.0
-pyinstaller==6.22.3
