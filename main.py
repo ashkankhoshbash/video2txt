@@ -2,16 +2,13 @@
 
 import argparse
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
-import wave
 from importlib.util import find_spec
 from pathlib import Path
 
-import numpy as np
 from faster_whisper import WhisperModel
+
+from video2txt.transcription import transcribe
 
 
 def configure_cuda_library_path():
@@ -55,22 +52,6 @@ def find_videos(video_dir):
     return videos
 
 
-def transcribe_video(model, video, audio):
-    """Extract the first audio track and return its Persian transcript."""
-    subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-         "-y", "-i", str(video), "-map", "0:a:0", "-ac", "1",
-         "-ar", "16000", "-c:a", "pcm_s16le", str(audio)],
-        check=True,
-    )
-    with wave.open(str(audio), "rb") as wav_file:
-        pcm = wav_file.readframes(wav_file.getnframes())
-    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32)
-    samples /= 32768.0
-    segments, _ = model.transcribe(samples, language="fa", vad_filter=True)
-    return "\n".join(segment.text.strip() for segment in segments).strip()
-
-
 def main():
     """Parse CLI options and process the local video batch."""
     parser = argparse.ArgumentParser(description="Transcribe local videos.")
@@ -83,34 +64,22 @@ def main():
     args = parser.parse_args()
 
     videos = find_videos(Path("videos"))
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("Install FFmpeg and make sure it is on PATH.")
 
     configure_cuda_library_path()
-    model = WhisperModel("small", device="cuda", compute_type="int8_float16")
+    model = WhisperModel("large-v3", device="cuda", compute_type="int8_float16")
     args.output.mkdir(parents=True, exist_ok=True)
     failures = 0
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        audio = Path(temp_dir) / "audio.wav"
-        for video in videos:
-            try:
-                transcript = transcribe_video(model, video, audio)
-                output = args.output / f"{video.name}.txt"
-                text = f"{transcript}\n" if transcript else ""
-                output.write_text(text, encoding="utf-8")
-                print(output.resolve())
-            except (
-                OSError,
-                ValueError,
-                RuntimeError,
-                wave.Error,
-                subprocess.CalledProcessError,
-            ) as error:
-                failures += 1
-                print(
-                    f"Error processing {video.name}: {error}", file=sys.stderr
-                )
+    for video in videos:
+        try:
+            transcript = transcribe(model, video)
+            output = args.output / f"{video.name}.txt"
+            text = f"{transcript}\n" if transcript else ""
+            output.write_text(text, encoding="utf-8")
+            print(output.resolve())
+        except (OSError, ValueError, RuntimeError) as error:
+            failures += 1
+            print(f"Error processing {video.name}: {error}", file=sys.stderr)
 
     if failures:
         raise RuntimeError(

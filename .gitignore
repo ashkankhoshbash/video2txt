@@ -1,2 +1,12 @@
 .venv
 .idea
+.codex
+.aws
+.agents
+__pycache__/
+/build/
+/dist/
+/Video2Txt.spec
+/model/
+/videos/
+/transcripts/

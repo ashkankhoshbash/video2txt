@@ -1,3 +1,4 @@
+av
 faster-whisper
 numpy
 nvidia-cublas-cu12
