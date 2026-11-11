@@ -1,67 +1,125 @@
+"""Generate Persian transcripts for local videos."""
+
 import argparse
-import re
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import wave
+from importlib.util import find_spec
 from pathlib import Path
-from urllib.request import Request, urlopen
 
-CATALOG = "https://datisint.com/academy/videos"
-VIDEO_PATH = "/academy/videos/37e023454f874aca"
+import numpy as np
+from faster_whisper import WhisperModel
 
 
-def fetch(url):
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request, timeout=30) as response:
-        return response.read().decode("utf-8", errors="replace")
+def configure_cuda_library_path():
+    """Restart with the bundled CUDA libraries on the Linux loader path."""
+    if sys.platform != "linux" or find_spec("nvidia") is None:
+        return
+
+    library_dirs = []
+    for package in ("nvidia.cublas", "nvidia.cudnn"):
+        spec = find_spec(package)
+        if spec and spec.submodule_search_locations:
+            for location in spec.submodule_search_locations:
+                directory = Path(location) / "lib"
+                if directory.is_dir():
+                    library_dirs.append(str(directory))
+
+    existing = os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+    existing = [directory for directory in existing if directory]
+    missing = [
+        directory for directory in library_dirs if directory not in existing
+    ]
+    if missing:
+        # The Linux dynamic loader reads LD_LIBRARY_PATH at process startup.
+        env = os.environ.copy()
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(missing + existing)
+        os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)
+
+
+def find_videos(video_dir):
+    """Return the sorted list of visible files in the input directory."""
+    if not video_dir.is_dir():
+        raise RuntimeError(
+            "Create a videos directory and put your video files in it."
+        )
+    videos = sorted(
+        path for path in video_dir.iterdir()
+        if path.is_file() and not path.name.startswith(".")
+    )
+    if not videos:
+        raise RuntimeError("The videos directory is empty.")
+    return videos
+
+
+def transcribe_video(model, video, audio):
+    """Extract the first audio track and return its Persian transcript."""
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+         "-y", "-i", str(video), "-map", "0:a:0", "-ac", "1",
+         "-ar", "16000", "-c:a", "pcm_s16le", str(audio)],
+        check=True,
+    )
+    with wave.open(str(audio), "rb") as wav_file:
+        pcm = wav_file.readframes(wav_file.getnframes())
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32)
+    samples /= 32768.0
+    segments, _ = model.transcribe(samples, language="fa", vad_filter=True)
+    return "\n".join(segment.text.strip() for segment in segments).strip()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Transcribe a short Datis Academy sample.")
-    parser.add_argument("--output", type=Path, default=Path("transcript.txt"))
+    """Parse CLI options and process the local video batch."""
+    parser = argparse.ArgumentParser(description="Transcribe local videos.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("transcripts"),
+        help="Directory for the generated transcripts",
+    )
     args = parser.parse_args()
 
+    videos = find_videos(Path("videos"))
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("Install FFmpeg and make sure it is on PATH.")
 
-    if VIDEO_PATH not in fetch(CATALOG):
-        raise RuntimeError("The selected tutorial is no longer linked from the Datis catalog.")
-
-    page = fetch("https://datisint.com" + VIDEO_PATH)
-    match = re.search(r'aparat\.com/(?:video/video/embed/videohash/|v/)([a-zA-Z0-9]+)', page)
-    if not match:
-        raise RuntimeError("Could not find the Aparat player on the tutorial page.")
-
-    media_url = subprocess.check_output(
-        [sys.executable, "-m", "yt_dlp", "--no-playlist", "-f", "ba/w",
-         "--get-url", f"https://www.aparat.com/v/{match[1]}"],
-        text=True,
-    ).strip()
-
-    from faster_whisper import WhisperModel
+    configure_cuda_library_path()
+    model = WhisperModel("small", device="cuda", compute_type="int8_float16")
+    args.output.mkdir(parents=True, exist_ok=True)
+    failures = 0
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        audio = Path(temp_dir) / "sample.wav"
-        subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-             "-rw_timeout", "30000000", "-i", media_url, "-t", "60",
-             "-map", "0:a:0", "-ac", "1", "-ar", "16000",
-             "-c:a", "pcm_s16le", str(audio)],
-            check=True,
-        )
-        model = WhisperModel("small", device="cuda", compute_type="int8_float16")
-        segments, _ = model.transcribe(str(audio), language="fa", vad_filter=True)
-        transcript = "\n".join(segment.text.strip() for segment in segments).strip()
+        audio = Path(temp_dir) / "audio.wav"
+        for video in videos:
+            try:
+                transcript = transcribe_video(model, video, audio)
+                output = args.output / f"{video.name}.txt"
+                text = f"{transcript}\n" if transcript else ""
+                output.write_text(text, encoding="utf-8")
+                print(output.resolve())
+            except (
+                OSError,
+                ValueError,
+                RuntimeError,
+                wave.Error,
+                subprocess.CalledProcessError,
+            ) as error:
+                failures += 1
+                print(
+                    f"Error processing {video.name}: {error}", file=sys.stderr
+                )
 
-    if not transcript:
-        raise RuntimeError("No speech was detected in the first 60 seconds.")
-    args.output.write_text(transcript + "\n", encoding="utf-8")
-    print(args.output.resolve())
+    if failures:
+        raise RuntimeError(
+            f"Failed to transcribe {failures} of {len(videos)} files."
+        )
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         raise SystemExit(f"Error: {error}") from error

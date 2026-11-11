@@ -1,2 +1,4 @@
 faster-whisper
-yt-dlp
+numpy
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
